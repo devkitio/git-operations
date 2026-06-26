@@ -1,6 +1,6 @@
 # Git Operations Skill
 
-`git-operations` 是一个面向 Codex / OpenCode Agent 的 Git 发布操作技能，用来把提交、推送、打标签、发布分支合并、Jenkins 生产打包和镜像发布流程约束成可重复、可审计的安全工作流。
+`git-operations` 是一个面向 Codex / Agent 的 Git 发布操作技能，用来把中文提交、按功能拆分提交、推送、打标签、合并到 `master`、Jenkins 生产打包、`pnpm build` 静态打包和镜像发布流程约束成可重复、可审计的安全工作流。
 
 这个仓库同时提供两种形态：
 
@@ -13,8 +13,9 @@
 
 - `commit`、`提交代码`、`提交并推送`
 - `tag`、`tag v1.2.3`、`打标签`、`发版`
-- 合并到 `main` / `master`
+- 合并到 `master`
 - Jenkins 生产环境打包
+- `pnpm build` / `pnpm build:docker` 普通前端打包
 - Docker 镜像发布
 - Git 发布流程风险检查
 
@@ -30,15 +31,15 @@
 
 ## 核心发布模型
 
-本 skill 采用“先发布分支，再发布 tag，最后 Jenkins 打包”的模型：
+本 skill 采用“先提交当前改动，再创建发布 tag，再合并到 `master`，最后按项目脚本打包”的模型：
 
-1. 开发分支通过 PR、代码平台或明确用户指令合入 `main` / `master`。
-2. 在发布分支的确定提交上创建发布 tag，例如 `v1.2.3`。
-3. Jenkins checkout 已打 tag 的提交。
-4. Jenkins 校验当前提交确实有发布 tag。
-5. Jenkins 使用该 tag 作为 Docker 镜像版本构建并推送。
+1. 输入 `commit` 时，检查当前工作区，按功能拆分成一个或多个中文提交。
+2. 输入 `tag` / `打标签` / `发版` 时，先检查未提交代码；有改动就先走 `commit` 流程，没有可提交代码就直接创建发布 tag。
+3. tag 创建并推送后，固定合并到 `master`。
+4. 如果需要 Jenkins 生产打包，Jenkins checkout 已打 tag 的提交，校验 tag 后构建并推送镜像。
+5. 如果是普通前端项目，按 `package.json` 真实脚本选择 `pnpm build` 或 `pnpm build:docker`。
 
-生产环境打包默认不做 `tag+1`。如果 `main` 当前提交已经有 tag，就直接使用这个 tag。只有用户明确要求“创建新发布 tag”时，才允许根据远端已有 tag 推导下一个版本。
+生产环境打包默认不做 `tag+1`。如果发布提交已经有 tag，就直接使用这个 tag。只有用户输入 `tag` 且未提供版本号时，才根据远端已有 tag 推导下一个版本。
 
 ## 为什么生产打包不自动 tag+1
 
@@ -130,11 +131,11 @@ tag v1.2.3
 
 当用户要求创建发布 tag 时，skill 会区分两种情况：
 
-| 用户输入                    | 行为                                              |
-| --------------------------- | ------------------------------------------------- |
-| `tag v1.2.3`                | 使用用户指定版本创建 tag                          |
-| `tag` / `打标签` / `发版`   | 先确认是否创建新 tag，再从远端 tag 推导下一个版本 |
-| `Jenkins 打包` / `生产打包` | 使用当前提交已有 tag，不创建新 tag                |
+| 用户输入                    | 行为                                                          |
+| --------------------------- | ------------------------------------------------------------- |
+| `tag v1.2.3`                | 检查未提交代码，必要时先中文提交，再使用用户指定版本创建 tag  |
+| `tag` / `打标签` / `发版`   | 检查未提交代码，必要时先中文提交，再从远端 tag 推导下一个版本 |
+| `Jenkins 打包` / `生产打包` | 使用当前提交已有 tag，不创建新 tag                            |
 
 创建 tag 时的关键规则：
 
@@ -143,11 +144,12 @@ tag v1.2.3
 - 检查本地和远端是否已有同名 tag。
 - 默认创建 annotated tag。
 - 默认只推送指定 tag，不执行 `git push --tags`。
+- tag 推送后固定合并到 `master`。
 - 远端已有同名 tag 时停止，不静默 retag。
 
 ## 自动推导版本规则
 
-只有用户明确要创建新 tag，且没有提供版本号时，才推导下一个版本。
+用户输入 `tag`、`打标签`、`发版` 且没有提供版本号时，推导下一个版本。
 
 推荐读取远端 tag：
 
@@ -170,18 +172,18 @@ v7     -> v8
 - 日期版本
 - 多条版本线
 - tag 前缀混乱
-- 当前发布提交已经有 tag
+- 当前发布提交已经有 tag，且无法判断是否复用已有 tag
 - 无法判断项目版本策略
 
-## 合并到 main / master
+## 合并到 master
 
-合并分支是独立发布动作，不属于 Jenkins 打包步骤。
+`tag` 流程固定包含合并到 `master`。Jenkins 打包流程不负责合并分支。
 
 推荐策略：
 
-- 优先通过 PR 或代码平台合并。
-- 仓库存在 `main` 时优先认为 `main` 是发布分支。
-- 只有仓库实际使用 `master` 或用户明确要求时，才使用 `master`。
+- 输入 `tag` 后，以 `master` 作为固定发布目标分支。
+- 合并前确认当前分支、`master`、远端名称、上游状态和 ahead/behind。
+- 如果仓库不存在 `master`，停止并询问实际发布分支。
 - 本地合并默认使用保守策略，例如 `git merge --ff-only`。
 - 冲突、目标分支状态不清、需要 merge commit 时停止并询问用户。
 
@@ -208,6 +210,25 @@ pnpm build:jenkins true "$DOCKER_IMAGE"
 ```bash
 TAG="$(git tag --points-at HEAD | head -n 1)"
 pnpm build:all "$TAG" true "$DOCKER_IMAGE"
+```
+
+如果项目没有 `build:jenkins` / `build:all`，但有普通前端构建脚本，则按 `package.json` 选择：
+
+```bash
+pnpm build
+```
+
+如果项目需要输出 Docker/Nginx 静态目录，并且存在 `build:docker`：
+
+```bash
+pnpm build:docker
+```
+
+例如 `PodifyAdminPc`：
+
+```text
+pnpm build        -> vite build，输出 dist/
+pnpm build:docker -> vite build --outDir=./docker/dist/，输出 docker/dist/
 ```
 
 ## Jenkinsfile 示例
@@ -262,6 +283,19 @@ pipeline {
 }
 ```
 
+## 普通 pnpm build 打包
+
+不是所有项目都有 `build:all` 或 `build:jenkins`。处理普通前端项目时，必须先读取 `package.json` 的 `scripts`，只运行真实存在的脚本。
+
+推荐选择顺序：
+
+1. 存在 `build:jenkins`：生产镜像流水线优先使用 `pnpm build:jenkins true <registry>`。
+2. 存在 `build:all`：服务端镜像全量构建使用 `pnpm build:all <tag> true <registry>`。
+3. 存在 `build`：普通静态生产包使用 `pnpm build`。
+4. 存在 `build:docker` 且项目需要 Docker/Nginx 静态目录：使用 `pnpm build:docker`。
+
+即使 README 写的是 `yarn build`，只要项目有 `pnpm-lock.yaml` 且 `package.json` 存在同名 script，也可以优先用 `pnpm` 执行。
+
 ## 安全护栏
 
 本 skill 明确禁止 Agent 在未获得用户明确授权时执行以下操作：
@@ -272,7 +306,7 @@ pipeline {
 - 强推
 - 改写历史
 - 静默 retag
-- 自动合并发布分支
+- 非 `tag` 发布场景自动合并发布分支
 - Jenkins 打包时自动 `tag+1`
 
 遇到以下情况必须停止：
@@ -283,6 +317,7 @@ pipeline {
 - 远端已有同名 tag。
 - 当前提交没有发布 tag 却要求生产打包。
 - 合并冲突。
+- 仓库不存在 `master` 且用户没有指定实际发布分支。
 - 权限不足。
 - 测试或构建失败。
 
@@ -340,7 +375,7 @@ python quick_validate.py <skill-folder>
 推荐提交信息：
 
 ```text
-docs: 更新 Git 操作技能 Jenkins 发布流程
+docs: 更新 Git 操作技能发布和打包流程
 ```
 
 推荐发布方式：
