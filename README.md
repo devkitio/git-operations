@@ -141,9 +141,10 @@ tag v1.2.3
 
 - 先检查未提交改动。
 - 必要时按功能拆分中文提交。
+- 记录当前分支、当前提交和最终 tag。
 - 检查本地和远端是否已有同名 tag。
 - 默认创建 annotated tag。
-- 默认只推送指定 tag，不执行 `git push --tags`。
+- 默认只推送当前分支和指定 tag，不执行 `git push --tags`。
 - tag 推送后固定合并到 `master`。
 - 远端已有同名 tag 时停止，不静默 retag。
 
@@ -184,8 +185,22 @@ v7     -> v8
 - 输入 `tag` 后，以 `master` 作为固定发布目标分支。
 - 合并前确认当前分支、`master`、远端名称、上游状态和 ahead/behind。
 - 如果仓库不存在 `master`，停止并询问实际发布分支。
-- 本地合并默认使用保守策略，例如 `git merge --ff-only`。
+- 本地合并默认使用保守策略，只允许 fast-forward。
 - 冲突、目标分支状态不清、需要 merge commit 时停止并询问用户。
+
+推荐顺序：
+
+```bash
+SOURCE_BRANCH="$(git branch --show-current)"
+RELEASE_TAG="v1.2.3"
+git push --atomic origin "$SOURCE_BRANCH" "$RELEASE_TAG"
+git switch master
+git pull --ff-only origin master
+git merge --ff-only "$RELEASE_TAG"
+git push origin master
+```
+
+如果 `git merge --ff-only "$RELEASE_TAG"` 失败，说明 `master` 不能安全快进到发布 tag，应停止并让用户决定是否通过 PR、merge commit 或其他策略处理。
 
 ## Jenkins 生产打包流程
 
@@ -291,8 +306,10 @@ pipeline {
 
 1. 存在 `build:jenkins`：生产镜像流水线优先使用 `pnpm build:jenkins true <registry>`。
 2. 存在 `build:all`：服务端镜像全量构建使用 `pnpm build:all <tag> true <registry>`。
-3. 存在 `build`：普通静态生产包使用 `pnpm build`。
-4. 存在 `build:docker` 且项目需要 Docker/Nginx 静态目录：使用 `pnpm build:docker`。
+3. 普通静态生产包：用户说“普通打包”“静态包”“pnpm build 打包”时使用 `pnpm build`。
+4. Docker/Nginx 静态目录：用户说“Docker 打包”“Nginx 部署包”“docker/dist”时，且项目存在 `build:docker`，使用 `pnpm build:docker`。
+
+如果 `build` 和 `build:docker` 同时存在且用户没有说明部署目标，先根据项目 README、Dockerfile、docker 目录和已有产物判断；仍不明确时，给出推荐并询问，不要一次性两个都跑。
 
 即使 README 写的是 `yarn build`，只要项目有 `pnpm-lock.yaml` 且 `package.json` 存在同名 script，也可以优先用 `pnpm` 执行。
 
